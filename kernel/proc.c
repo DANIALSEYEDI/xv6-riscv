@@ -5,7 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
-
+#include "pinfo.h"
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -700,4 +700,44 @@ procdump(void)
     printk("%d %s %s", p->pid, state, p->name);
     printk("\n");
   }
+}
+
+// Copy info about up to max non-UNUSED processes to user address addr.
+// Returns the number of entries written, or -1 on error.
+int
+kgetprocs(uint64 addr, int max)
+{
+  struct pinfo *tmp;
+  struct proc *p;
+  int n = 0;
+
+  // one page (4096 bytes) holds NPROC * sizeof(struct pinfo) = 64 * 40 bytes
+  tmp = (struct pinfo *)kalloc();
+  if(tmp == 0)
+    return -1;
+
+  acquire(&wait_lock);
+  for(p = proc; p < &proc[NPROC] && n < max; p++){
+    acquire(&p->lock);
+    if(p->state != UNUSED){
+      tmp[n].pid = p->pid;
+      tmp[n].ppid = p->parent ? p->parent->pid : 0;
+      tmp[n].state = p->state;
+      tmp[n].sz = p->sz;
+      safestrcpy(tmp[n].name, p->name, sizeof(tmp[n].name));
+      n++;
+    }
+    release(&p->lock);
+  }
+  release(&wait_lock);
+
+  // copyout may sleep, so no locks are held here.
+  struct proc *me = myproc();
+  int r = 0;
+  if(n > 0 && copyout(me->pagetable, me->sz, addr, (char *)tmp,
+                      n * sizeof(struct pinfo)) < 0)
+    r = -1;
+
+  kfree(tmp);
+  return r < 0 ? -1 : n;
 }
