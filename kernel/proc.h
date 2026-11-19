@@ -88,6 +88,12 @@ struct proc {
   int killed;           // If non-zero, have been killed
   int xstate;           // Exit status to be returned to parent's wait
   int pid;              // Process ID
+  int qlevel;                  // queue number: 1 (RR), 2 (SJF), 3 (FCFS)
+  uint64 qenter;               // tick when it entered the current queue
+  int waittime;                // RUNNABLE ticks since last run/promotion
+  int burst;                   // Time Burst (SJF)
+  int confidence;              // Confidence 0..100 (SJF)
+  int qticks;                  // ticks used in the current RR quantum
 
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process

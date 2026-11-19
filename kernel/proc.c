@@ -124,6 +124,12 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->qlevel = 3;
+  p->qenter = ticks;
+  p->waittime = 0;
+  p->burst = DEFAULT_BURST;
+  p->confidence = DEFAULT_CONF;
+  p->qticks = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -226,6 +232,7 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+  p->qlevel = 1;
 
   release(&p->lock);
 }
