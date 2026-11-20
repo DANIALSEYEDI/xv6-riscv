@@ -26,6 +26,28 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+// Linear Congruential Generator: x(n+1) = (a*x(n) + c) mod 2^32
+// a = 1664525, c = 1013904223 (Numerical Recipes constants).
+// uint is 32 bits, so overflow gives "mod 2^32" automatically.
+static uint lcg_state = 12345;
+static struct spinlock lcg_lock;
+
+// Returns a pseudo-random number in 0..99.
+// (marked unused for now; it will be used by the SJF scheduler)
+__attribute__((unused)) static int
+lcg_rand(void)
+{
+  uint x;
+
+  acquire(&lcg_lock);
+  lcg_state = lcg_state * 1664525 + 1013904223;
+  x = lcg_state;
+  release(&lcg_lock);
+
+  // use the high bits: low bits of an LCG with modulus 2^k have short periods
+  return (x >> 16) % 100;
+}
+
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -51,6 +73,7 @@ procinit(void)
 
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
+  initlock(&lcg_lock, "lcg");
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->state = UNUSED;
