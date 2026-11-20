@@ -29,6 +29,19 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+// Called on every timer interrupt for the process running on this CPU.
+// Returns 1 if the process should give up the CPU.
+static int
+rr_tick(struct proc *p)
+{
+  p->qticks++;
+  if(p->qticks >= QUANTUM_RR){
+    p->qticks = 0;
+    printk("RR: pid=%d ran %d ticks\n", p->pid, QUANTUM_RR);
+    return 1;
+  }
+  return 0;
+}
 //
 // handle an interrupt, exception, or system call from user space.
 // called from, and returns to, trampoline.S
@@ -82,7 +95,8 @@ usertrap(void)
     kexit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2)
+// give up the CPU if this is a timer interrupt.
+  if (which_dev == 2 && rr_tick(p))
     yield();
 
   prepare_return();
@@ -154,7 +168,7 @@ kerneltrap()
   }
 
   // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2 && myproc() != 0)
+  if (which_dev == 2 && myproc() != 0 && rr_tick(myproc()))
     yield();
 
   // the yield() may have caused some traps to occur,

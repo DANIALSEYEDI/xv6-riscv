@@ -281,6 +281,11 @@ kfork(void)
     return -1;
   }
   np->sz = p->sz;
+  // init and its shell start in queue 1 (round robin);
+  // all other new processes keep the default queue 3.
+  if (p == initproc)
+    np->qlevel = 1;
+  
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -456,6 +461,7 @@ scheduler(void)
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
+        p->qticks = 0;
         c->proc = p;
         swtch(&c->context, &p->context);
 
