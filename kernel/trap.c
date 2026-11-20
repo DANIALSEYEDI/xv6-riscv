@@ -31,6 +31,9 @@ trapinithart(void)
 
 // Called on every timer interrupt for the process running on this CPU.
 // Returns 1 if the process should give up the CPU.
+#if defined(MLFQ)
+// Called on every timer interrupt for the process running on this CPU.
+// Returns 1 if the process should give up the CPU.
 static int
 rr_tick(struct proc *p)
 {
@@ -41,6 +44,22 @@ rr_tick(struct proc *p)
     return 1;
   }
   return 0;
+}
+#endif
+
+// Decide whether the running process must give up the CPU on a timer tick.
+static int
+should_yield(struct proc *p)
+{
+#if defined(MLFQ)
+  if(p->qlevel == 3)
+    return 0;          // FCFS: the clock never preempts it
+  if(p->qlevel == 2)
+    return 1;          // SJF: a new decision at every tick
+  return rr_tick(p);   // queue 1: round robin with QUANTUM_RR
+#else
+  return 1;            // default xv6: yield on every tick
+#endif
 }
 //
 // handle an interrupt, exception, or system call from user space.
@@ -96,7 +115,7 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
 // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2 && rr_tick(p))
+  if (which_dev == 2 && should_yield(p))
     yield();
 
   prepare_return();
@@ -168,7 +187,7 @@ kerneltrap()
   }
 
   // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2 && myproc() != 0 && rr_tick(myproc()))
+  if (which_dev == 2 && myproc() != 0 && should_yield(myproc()))
     yield();
 
   // the yield() may have caused some traps to occur,

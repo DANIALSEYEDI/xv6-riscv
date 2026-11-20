@@ -453,6 +453,161 @@ kwait(uint64 addr)
   }
 }
 
+#if defined(MLFQ)
+
+// ---------------------------------------------------------------
+// MLFQ: queue 1 = Round Robin, queue 2 = approximate SJF, queue 3 = FCFS
+// ---------------------------------------------------------------
+
+// index (in proc[]) of the last process that ran from queue 1
+static int rr_last = 0;
+
+// Run p (chosen earlier, without holding its lock) if it is still
+// RUNNABLE and still in queue q. Returns 1 if it ran.
+static int
+run_proc(struct cpu *c, struct proc *p, int q)
+{
+  int ran = 0;
+
+  acquire(&p->lock);
+  if (p->state == RUNNABLE && p->qlevel == q) {
+    p->state = RUNNING;
+    p->qticks = 0;     // new turn, new quantum
+    p->waittime = 0;   // it got the CPU, so its waiting time restarts
+    c->proc = p;
+    swtch(&c->context, &p->context);
+
+    // Don't re-enable interrupts on release.
+    mycpu()->intena = 0;
+
+    c->proc = 0;
+    ran = 1;
+  }
+  release(&p->lock);
+  return ran;
+}
+
+// Queue 1: next RUNNABLE process after the last one that ran (circular).
+static struct proc *
+pick_rr(void)
+{
+  for (int k = 1; k <= NPROC; k++) {
+    int i = (rr_last + k) % NPROC;
+    struct proc *p = &proc[i];
+    int ok;
+
+    acquire(&p->lock);
+    ok = (p->state == RUNNABLE && p->qlevel == 1);
+    release(&p->lock);
+    if (ok) {
+      rr_last = i;
+      return p;
+    }
+  }
+  return 0;
+}
+
+// Queue 2: approximate SJF.
+// Look at RUNNABLE processes in increasing Time Burst order. For each one
+// draw r in 0..99; if r <= confidence it is chosen, else go to the next.
+// The last candidate is chosen regardless of its confidence.
+static struct proc *
+pick_sjf(void)
+{
+  struct proc *cand[NPROC];
+  int bur[NPROC], conf[NPROC];
+  struct proc *p;
+  int n = 0;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state == RUNNABLE && p->qlevel == 2) {
+      cand[n] = p;
+      bur[n] = p->burst;
+      conf[n] = p->confidence;
+      n++;
+    }
+    release(&p->lock);
+  }
+  if (n == 0)
+    return 0;
+
+  // insertion sort by burst, ascending (stable: ties keep table order)
+  for (int i = 1; i < n; i++) {
+    struct proc *tp = cand[i];
+    int tb = bur[i], tc = conf[i];
+    int j = i - 1;
+    while (j >= 0 && bur[j] > tb) {
+      cand[j + 1] = cand[j];
+      bur[j + 1] = bur[j];
+      conf[j + 1] = conf[j];
+      j--;
+    }
+    cand[j + 1] = tp;
+    bur[j + 1] = tb;
+    conf[j + 1] = tc;
+  }
+
+  for (int i = 0; i < n; i++) {
+    if (i == n - 1 || lcg_rand() <= conf[i])
+      return cand[i];
+  }
+  return 0;
+}
+
+// Queue 3: FCFS = RUNNABLE process with the smallest queue-entry tick.
+// Ties are broken by position in the process table.
+static struct proc *
+pick_fcfs(void)
+{
+  struct proc *best = 0;
+  struct proc *p;
+  uint64 best_t = 0;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state == RUNNABLE && p->qlevel == 3 &&
+        (best == 0 || p->qenter < best_t)) {
+      best = p;
+      best_t = p->qenter;
+    }
+    release(&p->lock);
+  }
+  return best;
+}
+
+// Per-CPU process scheduler (MLFQ).
+void
+scheduler(void)
+{
+  struct cpu *c = mycpu();
+  struct proc *p;
+
+  c->proc = 0;
+  for (;;) {
+    // see the comment in the original xv6 scheduler about intr_on/off.
+    intr_on();
+    intr_off();
+
+    int q = 0;
+    if ((p = pick_rr()) != 0)
+      q = 1;
+    else if ((p = pick_sjf()) != 0)
+      q = 2;
+    else if ((p = pick_fcfs()) != 0)
+      q = 3;
+
+    if (q != 0) {
+      run_proc(c, p, q);
+    } else {
+      // nothing to run; stop running on this core until an interrupt.
+      asm volatile("wfi");
+    }
+  }
+}
+
+#else  // default round robin: the original xv6 scheduler
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -504,6 +659,8 @@ scheduler(void)
     }
   }
 }
+
+#endif
 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
